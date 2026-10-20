@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Run by 99-elgato-facecam.rules with the USB device name (e.g. 6-2) as argument.
+# Run by 99-obtura.rules with the USB device name (e.g. 6-2) as argument.
 # 1. If uvcvideo lost controls during enumeration, re-bind it (USB reset) until all 10 are there.
-# 2. Map the Elgato extension unit as V4L2 controls (facecam map-controls); the mapping is lost
+# 2. Map the Elgato extension unit as V4L2 controls (obtura map-controls); the mapping is lost
 #    on every bind, so it has to run after step 1.
 # EXPECTED_CTRLS can be overridden from the environment to test the reset path by hand.
 set -uo pipefail
@@ -12,7 +12,7 @@ INTF="${DEV}:1.0"
 DRV="/sys/bus/usb/drivers/uvcvideo"
 EXPECTED="${EXPECTED_CTRLS:-10}"
 MAX_TRIES=3
-TAG=facecam
+TAG=obtura
 
 video_node() {
     local node
@@ -27,13 +27,14 @@ count_ctrls() {
     [ -n "$dev" ] || { echo 0; return; }
     # While idle the camera sometimes stalls GET_CUR on a control that does exist; v4l2-ctl then
     # prints "error .. getting ext_ctrl" instead of the control line, which also counts as present.
-    # Controls added by map-controls (0x009a099x) are not counted.
-    /usr/bin/v4l2-ctl -d "$dev" --list-ctrls 2>&1 | grep -v ' 0x009a099' | grep -cE ' 0x009|getting ext_ctrl'
+    # Controls added by map-controls (0x009a099x, or by name on an error line) are not counted.
+    /usr/bin/v4l2-ctl -d "$dev" --list-ctrls 2>&1 \
+        | grep -vE ' 0x009a099|ext_ctrl (Shutter Speed|AE Metering|Noise Reduction)$' | grep -cE ' 0x009|getting ext_ctrl'
 }
 
 map_xu() {
     local out
-    if out=$(/usr/local/bin/facecam --device "$(video_node)" map-controls 2>&1); then
+    if out=$(/usr/local/bin/obtura --device "$(video_node)" map-controls 2>&1); then
         logger -t "$TAG" "Facecam ${DEV}: extension unit mapped (Shutter Speed, AE Metering, Noise Reduction)"
     else
         logger -t "$TAG" "Facecam ${DEV}: mapping the extension unit failed: $(echo "$out" | grep -m3 ERROR | tr '\n' ' ')"

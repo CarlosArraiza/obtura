@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""facecam — Camera Hub-style controls for the Elgato Facecam (1st gen, USB 0fd9:0078) on Linux.
+"""obtura — Camera Hub-style controls for the Elgato Facecam (1st gen, USB 0fd9:0078) on Linux.
 
 Usage:
-  facecam [status]                      show current settings
-  facecam exposure auto|manual          like Camera Hub's "Auto" switch
-  facecam shutter 1/33                  1/30 1/33 1/50 1/60 1/90 1/100 1/120 1/200 1/250  (manual only)
-  facecam iso 800                       100 400 800 3200 6400                              (manual only)
-  facecam metering center|average       auto exposure metering                             (auto only)
-  facecam noise-reduction on|off
-  facecam anti-flicker off|50|60        50 in Europe and most of the world, 60 in the Americas
-  facecam map-controls                  expose shutter/metering/noise reduction as V4L2 controls (for OBS)
-  facecam xu-dump                       read-only dump of the Elgato extension unit (for research)
+  obtura [status]                      show current settings
+  obtura exposure auto|manual          like Camera Hub's "Auto" switch
+  obtura shutter 1/33                  1/30 1/33 1/50 1/60 1/90 1/100 1/120 1/200 1/250  (manual only)
+  obtura iso 800                       100 400 800 3200 6400                              (manual only)
+  obtura metering center|average       auto exposure metering                             (auto only)
+  obtura noise-reduction on|off
+  obtura anti-flicker off|50|60        50 in Europe and most of the world, 60 in the Americas
+  obtura map-controls                  expose shutter/metering/noise reduction as V4L2 controls (for OBS)
+  obtura xu-dump                       read-only dump of the Elgato extension unit (for research)
 
 Options:
   --device /dev/videoN                  default: auto-detect by USB ID
@@ -22,11 +22,11 @@ Only values seen in USB captures of Elgato Camera Hub are offered. "exposure man
 auto resets exposure compensation to neutral).
 
 The camera only answers control requests while it is streaming. If no application (e.g. OBS)
-is using it, facecam keeps a temporary stream open (needs v4l2-ctl from v4l-utils).
+is using it, obtura keeps a temporary stream open (needs v4l2-ctl from v4l-utils).
 """
 import ctypes, errno, fcntl, glob, os, subprocess, sys, time
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 VID, PID = "0fd9", "0078"
 TESTED_FIRMWARE = {"0409"}  # bcdDevice values the captures were made with
 
@@ -279,15 +279,15 @@ def write(cam, args):
         set_exposure(cam, val == "manual")
     elif cmd == "shutter" and val.removesuffix("s") in SHUTTER:
         if not cam.manual():
-            sys.exit("Shutter speed only applies in manual exposure: facecam exposure manual")
+            sys.exit("Shutter speed only applies in manual exposure: obtura exposure manual")
         cam.xu_set(SEL_SHUTTER, SHUTTER[val.removesuffix("s")])
     elif cmd == "iso" and val.isdigit() and int(val) in ISO:
         if not cam.manual():
-            sys.exit("ISO only applies in manual exposure: facecam exposure manual")
+            sys.exit("ISO only applies in manual exposure: obtura exposure manual")
         cam.set(CID_BRIGHTNESS, ISO[int(val)])
     elif cmd == "metering" and val in METERING:
         if cam.manual():
-            sys.exit("Metering only applies in auto exposure: facecam exposure auto")
+            sys.exit("Metering only applies in auto exposure: obtura exposure auto")
         cam.xu_set(SEL_METERING, METERING[val])
     elif cmd == "noise-reduction" and val in ("on", "off"):
         cam.xu_set(SEL_NOISE_REDUCTION, int(val == "on"))
@@ -312,7 +312,7 @@ def main():
         print(__doc__)
         return 0
     if args and args[0] in ("-v", "--version"):
-        print(f"facecam {VERSION}")
+        print(f"obtura {VERSION}")
         return 0
 
     found, fw = find_device()
@@ -339,7 +339,7 @@ def main():
             else:
                 return 1
         except OSError as e:
-            sys.exit(f"The camera rejected the request: {e}. Is it streaming? (see 'facecam --help')")
+            sys.exit(f"The camera rejected the request: {e}. Is it streaming? (see 'obtura --help')")
     return 0
 
 

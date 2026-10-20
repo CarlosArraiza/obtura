@@ -2,4 +2,4 @@
 # When it enumerates, the camera stalls (-32) many of the GET_DEF/GET_CUR requests uvcvideo sends
 # while registering controls, and uvcvideo silently drops those controls (seen: 5 of 10, or 0 of 10).
 # A later re-bind recovers all of them. The helper runs deferred via systemd-run so udev is not blocked.
-ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="0078", RUN+="/usr/bin/systemd-run --no-block --collect --on-active=10 /usr/local/libexec/facecam-init %k"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="0078", RUN+="/usr/bin/systemd-run --no-block --collect --on-active=10 /usr/local/libexec/obtura-init %k"

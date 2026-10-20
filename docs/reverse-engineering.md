@@ -47,8 +47,8 @@ Useful Wireshark display filters (`N` = USB address of the camera):
 
 ## Linux: reproducing
 
-1. With the camera streaming, compare before and after: `facecam xu-dump`.
-2. Reproduce **only captured values**, one change at a time, and check the effect on the picture. For exposure-related settings, measuring the mean luma of captured frames gives an objective check. The tables in `facecam/facecam` only contain values verified this way.
+1. With the camera streaming, compare before and after: `obtura xu-dump`.
+2. Reproduce **only captured values**, one change at a time, and check the effect on the picture. For exposure-related settings, measuring the mean luma of captured frames gives an objective check. The tables in `obtura/obtura` only contain values verified this way.
 3. Open an issue or pull request with the capture (`.pcapng`, control traffic only), what you did during it, your firmware version (`cat /sys/bus/usb/devices/*/bcdDevice` for the camera, or `lsusb -v`) and the `analyze_capture.py` output.
 
 Before sharing a capture, remove your camera's serial number: it is sent as a UTF-16 string in the device descriptors at the start of a capture that includes plugging the camera in.

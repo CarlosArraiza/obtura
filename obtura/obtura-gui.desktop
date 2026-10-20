@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Facecam
+Name=Obtura
 GenericName=Webcam Settings
 Comment=Camera Hub-style settings for the Elgato Facecam
-Exec=facecam-gui
+Exec=obtura-gui
 Icon=camera-web
 Terminal=false
 Categories=AudioVideo;Video;

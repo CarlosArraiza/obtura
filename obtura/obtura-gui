@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""facecam-gui — Camera Hub-style window for the Elgato Facecam (1st gen, USB 0fd9:0078) on Linux.
+"""obtura-gui — Camera Hub-style window for the Elgato Facecam (1st gen, USB 0fd9:0078) on Linux.
 
-Usage: facecam-gui [--device /dev/videoN] [--force]
+Usage: obtura-gui [--device /dev/videoN] [--force]
 
 Shows a live preview while the camera is free. The camera only answers control requests while
 it is streaming, so with the preview off the settings can only be changed if another application
-(e.g. OBS) is using the camera. Offers the same values as the facecam command, plus the standard
+(e.g. OBS) is using the camera. Offers the same values as the obtura command, plus the standard
 image controls (zoom, contrast, saturation, sharpness, white balance) within the ranges the
 camera reports.
 """
@@ -21,9 +21,9 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFormLayout, 
 
 
 def load_core():
-    """Import the facecam command installed next to this script (it has no .py suffix)."""
-    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "facecam")
-    loader = importlib.machinery.SourceFileLoader("facecam_core", path)
+    """Import the obtura command installed next to this script (it has no .py suffix)."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "obtura")
+    loader = importlib.machinery.SourceFileLoader("obtura_core", path)
     module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
     loader.exec_module(module)
     return module
@@ -48,7 +48,7 @@ class Window(QMainWindow):
         super().__init__()
         self.dev, self.writable = dev, writable
         self.cam = fc.Camera(dev)
-        self.setWindowTitle("Facecam")
+        self.setWindowTitle("Obtura")
         self.qcamera, self.got_frame = None, False
 
         # Preview (left)
@@ -148,7 +148,7 @@ class Window(QMainWindow):
         return box
 
     def combo(self, table, labels, setter):
-        """Combo box over one of facecam's capture tables; item data is the raw camera value."""
+        """Combo box over one of obtura's capture tables; item data is the raw camera value."""
         box = QComboBox()
         for key, raw in table.items():
             box.addItem(labels[key], raw)
@@ -293,13 +293,13 @@ def main():
         print(__doc__)
         return 0
     app = QApplication(sys.argv[:1])
-    app.setApplicationName("facecam-gui")
-    app.setDesktopFileName("facecam-gui")
+    app.setApplicationName("obtura-gui")
+    app.setDesktopFileName("obtura-gui")
     found, fw = fc.find_device()
     dev = argv[argv.index("--device") + 1] if "--device" in argv else found
     if not dev:
         from PySide6.QtWidgets import QMessageBox
-        QMessageBox.critical(None, "Facecam", "Elgato Facecam (0fd9:0078) not found.")
+        QMessageBox.critical(None, "Obtura", "Elgato Facecam (0fd9:0078) not found.")
         return 1
     window = Window(dev, writable=fw in fc.TESTED_FIRMWARE or "--force" in argv)
     window.show()
