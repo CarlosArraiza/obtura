@@ -1,0 +1,20 @@
+# Maintainer: CarlosArraiza <https://github.com/CarlosArraiza>
+pkgname=obtura
+pkgver=0.3.1
+pkgrel=1
+pkgdesc="Unofficial Camera Hub-style controls (shutter speed, ISO, metering, noise reduction) for the Elgato Facecam (1st gen)"
+arch=('any')
+url="https://github.com/CarlosArraiza/obtura"
+license=('GPL-3.0-or-later')
+depends=('python' 'v4l-utils' 'systemd')
+optdepends=('pyside6: graphical interface (obtura-gui)'
+            'qt6-multimedia: graphical interface (obtura-gui)')
+install=obtura.install
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "$pkgname-$pkgver"
+  PREFIX=/usr LIBEXECDIR=/usr/lib/obtura UDEVDIR=/usr/lib/udev/rules.d DESTDIR="$pkgdir" ./install.sh
+  install -Dm644 README.md docs/protocol.md -t "$pkgdir/usr/share/doc/$pkgname/"
+}

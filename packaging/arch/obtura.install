@@ -1,0 +1,16 @@
+_obtura_notes() {
+  if [ -e /etc/udev/rules.d/99-obtura.rules ]; then
+    echo ">>> /etc/udev/rules.d/99-obtura.rules from a manual install overrides this package's rule."
+    echo ">>> Remove the manual install first: sudo ./uninstall.sh in the source directory."
+  fi
+}
+
+post_install() {
+  echo ">>> Re-plug the Elgato Facecam (or reboot), then check: journalctl -t obtura"
+  echo ">>> Or apply it now: sudo udevadm trigger --action=add --attr-match=idVendor=0fd9 --attr-match=idProduct=0078"
+  _obtura_notes
+}
+
+post_upgrade() {
+  _obtura_notes
+}
