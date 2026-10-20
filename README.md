@@ -36,7 +36,7 @@ Facecam MK.2, Facecam Pro and Facecam Neo have different USB IDs and are **not**
 
 ## Install
 
-Requirements: Python 3, `v4l-utils` (`v4l2-ctl`), systemd and udev. No compiled code. The GUI also needs **PySide6** with QtMultimedia (`pyside6` on Arch, `python3-pyside6` on Fedora, `python3-pyside6.qtmultimedia` and `python3-pyside6.qtmultimediawidgets` on Debian/Ubuntu); the command line tool needs no extra Python packages.
+Requirements: Python 3, `v4l-utils` (`v4l2-ctl`), systemd and udev. No compiled code. The GUI also needs **PySide6** with QtMultimedia (`pyside6` and `qt6-multimedia` on Arch, `python3-pyside6` on Fedora, `python3-pyside6.qtmultimedia` and `python3-pyside6.qtmultimediawidgets` on Debian/Ubuntu); the command line tool needs no extra Python packages.
 
 ```sh
 git clone https://github.com/CarlosArraiza/obtura.git
@@ -47,6 +47,18 @@ sudo ./install.sh
 Then re-plug the camera (or reboot) and check the log: `journalctl -t obtura`. To uninstall: `sudo ./uninstall.sh`.
 
 Files installed: `/usr/local/bin/obtura`, `/usr/local/bin/obtura-gui`, `/usr/local/share/applications/obtura-gui.desktop`, `/usr/local/libexec/obtura-init`, `/etc/udev/rules.d/99-obtura.rules`.
+
+### Arch Linux and derivatives
+
+Build and install the package with pacman instead (it will also be on the AUR as `obtura`):
+
+```sh
+git clone https://github.com/CarlosArraiza/obtura.git
+cd obtura/packaging/arch
+makepkg -si
+```
+
+For the GUI: `sudo pacman -S --asdeps pyside6 qt6-multimedia`. Remove it with `sudo pacman -R obtura`. If you installed with `install.sh` before, run `sudo ./uninstall.sh` first: its udev rule in `/etc` would take precedence over the package's.
 
 ## Using the GUI
 
