@@ -1,0 +1,21 @@
+
+User Controls
+
+                     brightness 0x00980900 (int)    : min=0 max=255 step=1 default=128 value=128 flags=has-min-max
+                       contrast 0x00980901 (int)    : min=0 max=10 step=1 default=3 value=5 flags=has-min-max
+                     saturation 0x00980902 (int)    : min=0 max=63 step=1 default=35 value=32 flags=has-min-max
+        white_balance_automatic 0x0098090c (bool)   : default=1 value=1
+           power_line_frequency 0x00980918 (menu)   : min=0 max=2 default=2 value=2 (60 Hz)
+				0: Disabled
+				1: 50 Hz
+				2: 60 Hz
+      white_balance_temperature 0x0098091a (int)    : min=2800 max=12500 step=100 default=5000 value=5000 flags=inactive, has-min-max
+                      sharpness 0x0098091b (int)    : min=0 max=4 step=1 default=2 value=2 flags=has-min-max
+
+Camera Controls
+
+                  auto_exposure 0x009a0901 (menu)   : min=0 max=3 default=0 value=0 (Auto Mode)
+				0: Auto Mode
+				2: Shutter Priority Mode
+         exposure_time_absolute 0x009a0902 (int)    : min=1 max=2500 step=1 default=156 value=300 flags=inactive, has-min-max
+                  zoom_absolute 0x009a090d (int)    : min=1 max=31 step=1 default=1 value=1 flags=has-min-max

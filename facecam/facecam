@@ -1,0 +1,316 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""facecam — Camera Hub-style controls for the Elgato Facecam (1st gen, USB 0fd9:0078) on Linux.
+
+Usage:
+  facecam [status]                      show current settings
+  facecam exposure auto|manual          like Camera Hub's "Auto" switch
+  facecam shutter 1/33                  1/30 1/33 1/50 1/60 1/90 1/100 1/120 1/200 1/250  (manual only)
+  facecam iso 800                       100 400 800 3200 6400                              (manual only)
+  facecam metering center|average       auto exposure metering                             (auto only)
+  facecam noise-reduction on|off
+  facecam anti-flicker off|50|60        50 in Europe and most of the world, 60 in the Americas
+  facecam map-controls                  expose shutter/metering/noise reduction as V4L2 controls (for OBS)
+  facecam xu-dump                       read-only dump of the Elgato extension unit (for research)
+
+Options:
+  --device /dev/videoN                  default: auto-detect by USB ID
+  --force                               allow writes on an untested firmware version
+
+Only values seen in USB captures of Elgato Camera Hub are offered. "exposure manual" and
+"exposure auto" send the same sequences as Camera Hub (manual starts at ISO 100, 1/33 s;
+auto resets exposure compensation to neutral).
+
+The camera only answers control requests while it is streaming. If no application (e.g. OBS)
+is using it, facecam keeps a temporary stream open (needs v4l2-ctl from v4l-utils).
+"""
+import ctypes, errno, fcntl, glob, os, subprocess, sys, time
+
+VERSION = "0.1.0"
+VID, PID = "0fd9", "0078"
+TESTED_FIRMWARE = {"0409"}  # bcdDevice values the captures were made with
+
+# --- V4L2 / UVC ioctls ----------------------------------------------------------------------------
+
+def _iowr(t, nr, size):
+    return (3 << 30) | (size << 16) | (ord(t) << 8) | nr
+
+
+class V4l2Control(ctypes.Structure):
+    _fields_ = [("id", ctypes.c_uint32), ("value", ctypes.c_int32)]
+
+
+class XuQuery(ctypes.Structure):
+    _fields_ = [("unit", ctypes.c_uint8), ("selector", ctypes.c_uint8), ("query", ctypes.c_uint8),
+                ("size", ctypes.c_uint16), ("data", ctypes.c_void_p)]
+
+
+class MenuInfo(ctypes.Structure):
+    _fields_ = [("value", ctypes.c_uint32), ("name", ctypes.c_char * 32)]
+
+
+class XuMapping(ctypes.Structure):
+    _fields_ = [("id", ctypes.c_uint32), ("name", ctypes.c_char * 32), ("entity", ctypes.c_uint8 * 16),
+                ("selector", ctypes.c_uint8), ("size", ctypes.c_uint8), ("offset", ctypes.c_uint8),
+                ("v4l2_type", ctypes.c_uint32), ("data_type", ctypes.c_uint32),
+                ("menu_info", ctypes.POINTER(MenuInfo)), ("menu_count", ctypes.c_uint32),
+                ("reserved", ctypes.c_uint32 * 4)]
+
+
+VIDIOC_G_CTRL = _iowr("V", 27, ctypes.sizeof(V4l2Control))
+VIDIOC_S_CTRL = _iowr("V", 28, ctypes.sizeof(V4l2Control))
+UVCIOC_CTRL_MAP = _iowr("u", 0x20, ctypes.sizeof(XuMapping))
+UVCIOC_CTRL_QUERY = _iowr("u", 0x21, ctypes.sizeof(XuQuery))
+SET_CUR, GET_CUR, GET_MIN, GET_MAX, GET_RES, GET_LEN, GET_INFO, GET_DEF = 0x01, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87
+
+# Standard V4L2 controls (uvcvideo maps them from the UVC camera terminal / processing unit)
+CID_BRIGHTNESS = 0x00980900       # PU Brightness: ISO in manual, exposure compensation in auto
+CID_POWER_LINE = 0x00980918       # PU Power Line Frequency: anti-flicker
+CID_AUTO_EXPOSURE = 0x009A0901    # CT AE Mode
+V4L2_EXPOSURE_AUTO, V4L2_EXPOSURE_SHUTTER_PRIORITY = 0, 2  # UVC AE Mode 0x02 / 0x04
+
+# Elgato extension unit: unit 3, GUID {a8e5782b-36e6-4fa1-87f8-83e32b323124} (bytes in USB order)
+XU_UNIT = 3
+XU_GUID = bytes.fromhex("2b78e5a8e636a14f87f883e32b323124")
+XU_SELECTORS = [8, 18, 19, 20, 21, 25, 26, 27, 28]
+SEL_METERING, SEL_NOISE_REDUCTION, SEL_SHUTTER = 8, 18, 20
+
+# Value tables, all taken from Camera Hub captures (see docs/protocol.md)
+SHUTTER = {"1/30": 667, "1/33": 600, "1/50": 400, "1/60": 333, "1/90": 222, "1/100": 200,
+           "1/120": 167, "1/200": 100, "1/250": 80}          # XU sel 20, units of 50 µs
+ISO = {100: 0, 400: 86, 800: 128, 3200: 214, 6400: 255}    # PU Brightness in manual mode
+METERING = {"center": 1, "average": 2}                      # XU sel 8 (0 = read back in manual mode)
+ANTI_FLICKER = {"off": 0, "50": 1, "60": 2}
+BRIGHTNESS_NEUTRAL = 128
+
+# V4L2 controls created by map-controls (camera class, above the standard IDs)
+CID_SHUTTER, CID_METERING, CID_NOISE_REDUCTION = 0x009A0990, 0x009A0991, 0x009A0992
+# XU selector -> (mapped control, raw XU value -> V4L2 value: menu index or boolean)
+MAPPED = {SEL_SHUTTER: (CID_SHUTTER, lambda raw: list(SHUTTER.values()).index(raw)),
+          SEL_METERING: (CID_METERING, lambda raw: list(METERING.values()).index(raw)),
+          SEL_NOISE_REDUCTION: (CID_NOISE_REDUCTION, lambda raw: raw)}
+
+
+# --- Device access --------------------------------------------------------------------------------
+
+def _read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def find_device():
+    """Return (/dev/videoN, bcdDevice) of the Facecam's capture node."""
+    for node in sorted(glob.glob("/sys/class/video4linux/video*")):
+        if _read(f"{node}/index") != "0":
+            continue
+        usb = os.path.realpath(f"{node}/device/..")
+        if _read(f"{usb}/idVendor") == VID and _read(f"{usb}/idProduct") == PID:
+            return f"/dev/{os.path.basename(node)}", _read(f"{usb}/bcdDevice")
+    sys.exit("Elgato Facecam (0fd9:0078) not found.")
+
+
+class Camera:
+    def __init__(self, dev):
+        self.dev = dev
+        self.fd = os.open(dev, os.O_RDWR)
+
+    def get(self, cid):
+        c = V4l2Control(cid, 0)
+        fcntl.ioctl(self.fd, VIDIOC_G_CTRL, c)
+        return c.value
+
+    def set(self, cid, value):
+        fcntl.ioctl(self.fd, VIDIOC_S_CTRL, V4l2Control(cid, value))
+
+    def xu(self, sel, query, size, payload=None):
+        buf = (ctypes.c_uint8 * max(size, 1))(*(payload or b""))
+        fcntl.ioctl(self.fd, UVCIOC_CTRL_QUERY, XuQuery(XU_UNIT, sel, query, size, ctypes.cast(buf, ctypes.c_void_p)))
+        return int.from_bytes(bytes(buf[:size]), "little")
+
+    def xu_len(self, sel):
+        return self.xu(sel, GET_LEN, 2)
+
+    def xu_get(self, sel):
+        return self.xu(sel, GET_CUR, self.xu_len(sel))
+
+    def xu_set(self, sel, value):
+        # If map-controls has run, write through the mapped V4L2 control: uvcvideo caches control
+        # values, and a raw XU write would leave OBS and v4l2-ctl showing a stale value.
+        if sel in MAPPED:
+            cid, to_v4l2 = MAPPED[sel]
+            try:
+                self.set(cid, to_v4l2(value))
+                return
+            except OSError as e:
+                if e.errno != errno.EINVAL:  # EINVAL: control not mapped, fall back to a raw write
+                    raise
+        n = self.xu_len(sel)
+        self.xu(sel, SET_CUR, n, value.to_bytes(n, "little"))
+
+    def manual(self):
+        return self.get(CID_AUTO_EXPOSURE) == V4L2_EXPOSURE_SHUTTER_PRIORITY
+
+
+class KeepStreaming:
+    """Keep the camera streaming while we talk to it. If another app already streams, the
+    helper exits at once (device busy) and that is fine: the camera is already answering."""
+
+    def __init__(self, dev):
+        self.dev, self.proc = dev, None
+
+    def __enter__(self):
+        try:
+            self.proc = subprocess.Popen(["v4l2-ctl", "-d", self.dev, "--stream-mmap", "--stream-to=/dev/null"],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except FileNotFoundError:
+            sys.exit("v4l2-ctl not found: install v4l-utils.")
+        time.sleep(1.5)
+        return self
+
+    def __exit__(self, *exc):
+        self.proc.terminate()
+        self.proc.wait()
+
+
+# --- Commands -------------------------------------------------------------------------------------
+
+def status(cam):
+    manual = cam.manual()
+    b = cam.get(CID_BRIGHTNESS)
+    print(f"Exposure:         {'manual' if manual else 'auto'}")
+    if manual:
+        raw = cam.xu_get(SEL_SHUTTER)
+        shutter = next((k for k, v in SHUTTER.items() if v == raw), f"~1/{round(20000 / raw)}" if raw else "?")
+        iso = next((str(k) for k, v in ISO.items() if v == b), f"in between (brightness {b})")
+        print(f"  Shutter speed:  {shutter} s")
+        print(f"  ISO:            {iso}")
+    else:
+        m = cam.xu_get(SEL_METERING)
+        print(f"  Metering:       {next((k for k, v in METERING.items() if v == m), f'unknown ({m})')}")
+        print(f"  Compensation:   brightness {b} ({BRIGHTNESS_NEUTRAL} = neutral)")
+    print(f"Noise reduction:  {'on' if cam.xu_get(SEL_NOISE_REDUCTION) else 'off'}")
+    pl = cam.get(CID_POWER_LINE)
+    print(f"Anti-flicker:     {next((k for k, v in ANTI_FLICKER.items() if v == pl), '?')}{'' if pl == 0 else ' Hz'}")
+
+
+def map_controls(cam):
+    """Register the confirmed XU selectors as V4L2 controls (UVCIOC_CTRL_MAP). Lost on every
+    re-bind/re-plug of the camera, so the udev helper runs this after each initialisation."""
+    menu = lambda items: [(v, k.encode()) for k, v in items]
+    mappings = [
+        (CID_SHUTTER, b"Shutter Speed", SEL_SHUTTER, 32, 3, 4, menu((f"{k} s", v) for k, v in SHUTTER.items())),
+        (CID_METERING, b"AE Metering", SEL_METERING, 8, 3, 4, [(1, b"Center-weighted"), (2, b"Average")]),
+        (CID_NOISE_REDUCTION, b"Noise Reduction", SEL_NOISE_REDUCTION, 8, 2, 3, None),
+    ]  # (id, name, selector, bits, v4l2 type: 2 bool / 3 menu, uvc data type: 3 bool / 4 enum, menu)
+    ok = True
+    for cid, name, sel, bits, vtype, dtype, items in mappings:
+        m = XuMapping(id=cid, name=name, selector=sel, size=bits, offset=0, v4l2_type=vtype, data_type=dtype)
+        ctypes.memmove(m.entity, XU_GUID, 16)
+        if items:
+            arr = (MenuInfo * len(items))(*[MenuInfo(v, n) for v, n in items])
+            m.menu_info, m.menu_count = ctypes.cast(arr, ctypes.POINTER(MenuInfo)), len(items)
+        try:
+            fcntl.ioctl(cam.fd, UVCIOC_CTRL_MAP, m)
+            print(f"{name.decode()}: mapped")
+        except OSError as e:
+            if e.errno == 17:  # EEXIST
+                print(f"{name.decode()}: already mapped")
+            else:
+                print(f"{name.decode()}: ERROR {e}")
+                ok = False
+    # Query every control while the camera answers, so uvcvideo caches min/max/default and the
+    # controls also show up correctly when the camera is idle.
+    subprocess.run(["v4l2-ctl", "-d", cam.dev, "--list-ctrls-menus"], capture_output=True)
+    return ok
+
+
+def xu_dump(cam):
+    flags = [(0, "GET"), (1, "SET"), (2, "disabled-by-auto"), (3, "autoupdate"), (4, "async")]
+    for sel in XU_SELECTORS:
+        try:
+            n, info = cam.xu_len(sel), cam.xu(sel, GET_INFO, 1)
+            vals = " ".join(f"{k}={cam.xu(sel, q, n)}" for k, q in
+                            [("cur", GET_CUR), ("min", GET_MIN), ("max", GET_MAX), ("res", GET_RES), ("def", GET_DEF)])
+            print(f"sel {sel:2}: len={n} {vals} info=0x{info:02x} [{','.join(f for b, f in flags if info & 1 << b)}]")
+        except OSError as e:
+            print(f"sel {sel:2}: error {e.errno} ({os.strerror(e.errno)})")
+
+
+def write(cam, args):
+    cmd, val = args[0], (args[1] if len(args) > 1 else "")
+    if cmd == "exposure" and val == "manual":
+        cam.set(CID_AUTO_EXPOSURE, V4L2_EXPOSURE_SHUTTER_PRIORITY)
+        cam.xu_set(SEL_SHUTTER, SHUTTER["1/33"])
+        cam.set(CID_BRIGHTNESS, ISO[100])
+    elif cmd == "exposure" and val == "auto":
+        cam.set(CID_AUTO_EXPOSURE, V4L2_EXPOSURE_AUTO)
+        cam.set(CID_BRIGHTNESS, BRIGHTNESS_NEUTRAL)
+    elif cmd == "shutter" and val.removesuffix("s") in SHUTTER:
+        if not cam.manual():
+            sys.exit("Shutter speed only applies in manual exposure: facecam exposure manual")
+        cam.xu_set(SEL_SHUTTER, SHUTTER[val.removesuffix("s")])
+    elif cmd == "iso" and val.isdigit() and int(val) in ISO:
+        if not cam.manual():
+            sys.exit("ISO only applies in manual exposure: facecam exposure manual")
+        cam.set(CID_BRIGHTNESS, ISO[int(val)])
+    elif cmd == "metering" and val in METERING:
+        if cam.manual():
+            sys.exit("Metering only applies in auto exposure: facecam exposure auto")
+        cam.xu_set(SEL_METERING, METERING[val])
+    elif cmd == "noise-reduction" and val in ("on", "off"):
+        cam.xu_set(SEL_NOISE_REDUCTION, int(val == "on"))
+    elif cmd == "anti-flicker" and val.removesuffix("hz") in ANTI_FLICKER:
+        cam.set(CID_POWER_LINE, ANTI_FLICKER[val.removesuffix("hz")])
+    else:
+        print(__doc__)
+        return False
+    return True
+
+
+def main():
+    argv = sys.argv[1:]
+    dev = None
+    if "--device" in argv:
+        i = argv.index("--device")
+        dev = argv[i + 1]
+        del argv[i:i + 2]
+    force = "--force" in argv
+    args = " ".join(a for a in argv if a != "--force").lower().split()
+    if args and args[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
+    if args and args[0] in ("-v", "--version"):
+        print(f"facecam {VERSION}")
+        return 0
+
+    found, fw = find_device()
+    dev = dev or found
+    cmd = args[0] if args else "status"
+    writes = cmd not in ("status", "xu-dump", "map-controls")
+    if writes and fw not in TESTED_FIRMWARE and not force:
+        sys.exit(f"Untested firmware (bcdDevice {fw}); the value tables were captured on 4.09. "
+                 "Use --force at your own risk, and please report the result.")
+
+    with KeepStreaming(dev):
+        cam = Camera(dev)
+        try:
+            if cmd == "status":
+                status(cam)
+            elif cmd == "xu-dump":
+                xu_dump(cam)
+            elif cmd == "map-controls":
+                return 0 if map_controls(cam) else 1
+            elif write(cam, args):
+                status(cam)
+            else:
+                return 1
+        except OSError as e:
+            sys.exit(f"The camera rejected the request: {e}. Is it streaming? (see 'facecam --help')")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
