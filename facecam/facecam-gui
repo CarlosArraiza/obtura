@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""facecam-gui — Camera Hub-style window for the Elgato Facecam (1st gen, USB 0fd9:0078) on Linux.
+
+Usage: facecam-gui [--device /dev/videoN] [--force]
+
+Shows a live preview while the camera is free. The camera only answers control requests while
+it is streaming, so with the preview off the settings can only be changed if another application
+(e.g. OBS) is using the camera. Offers the same values as the facecam command, plus the standard
+image controls (zoom, contrast, saturation, sharpness, white balance) within the ranges the
+camera reports.
+"""
+import importlib.machinery, importlib.util, os, sys
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtMultimedia import QCamera, QMediaCaptureSession, QMediaDevices, QVideoFrameFormat
+from PySide6.QtMultimediaWidgets import QVideoWidget
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout,
+                               QLabel, QMainWindow, QPushButton, QScrollArea, QSlider, QStackedWidget,
+                               QVBoxLayout, QWidget)
+
+
+def load_core():
+    """Import the facecam command installed next to this script (it has no .py suffix)."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "facecam")
+    loader = importlib.machinery.SourceFileLoader("facecam_core", path)
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(module)
+    return module
+
+
+fc = load_core()
+
+# Standard V4L2 controls shown as sliders: (id, label)
+CID_ZOOM = 0x009A090D
+CID_WB_AUTO, CID_WB_TEMPERATURE = 0x0098090C, 0x0098091A
+SLIDERS = [(CID_ZOOM, "Zoom"), (0x00980901, "Contrast"), (0x00980902, "Saturation"), (0x0098091B, "Sharpness")]
+ANTI_FLICKER_LABELS = {"off": "Off", "50": "50 Hz", "60": "60 Hz"}
+PREVIEW_SIZE = (960, 540)  # light on USB bandwidth and CPU; the camera's smallest UYVY mode
+# Shorter than the 2 s USB autosuspend delay: the camera stalls control requests after a runtime
+# suspend until it streams again, and regular reads keep it awake after the preview is stopped.
+REFRESH_MS = 1500
+NO_FRAMES_MS = 4000  # the first stream after a format change sometimes delivers nothing
+
+
+class Window(QMainWindow):
+    def __init__(self, dev, writable):
+        super().__init__()
+        self.dev, self.writable = dev, writable
+        self.cam = fc.Camera(dev)
+        self.setWindowTitle("Facecam")
+        self.qcamera, self.got_frame = None, False
+
+        # Preview (left)
+        self.video = QVideoWidget()
+        self.video.setMinimumSize(480, 270)
+        self.video.videoSink().videoFrameChanged.connect(self.on_frame)
+        self.message = QLabel(alignment=Qt.AlignCenter, wordWrap=True)
+        self.preview = QStackedWidget()
+        self.preview.addWidget(self.video)
+        self.preview.addWidget(self.message)
+        self.session = QMediaCaptureSession()
+        self.session.setVideoOutput(self.video)
+        self.preview_button = QPushButton("Stop preview", clicked=self.toggle_preview)
+        self.watchdog = QTimer(self, singleShot=True, interval=NO_FRAMES_MS, timeout=self.restart_preview)
+
+        left = QVBoxLayout()
+        left.addWidget(self.preview, 1)
+        bottom = QHBoxLayout()
+        self.state = QLabel()
+        bottom.addWidget(self.state, 1)
+        bottom.addWidget(self.preview_button)
+        left.addLayout(bottom)
+
+        # Settings (right)
+        panel = QVBoxLayout()
+        if not writable:
+            warning = QLabel("Untested firmware: settings are read-only. "
+                             "Start with --force to change them at your own risk.", wordWrap=True)
+            warning.setStyleSheet("color: palette(highlighted-text); background: palette(highlight); padding: 6px;")
+            panel.addWidget(warning)
+        panel.addWidget(self.exposure_box())
+        panel.addWidget(self.image_box())
+        panel.addWidget(self.processing_box())
+        panel.addStretch()
+        self.settings = QWidget()
+        self.settings.setLayout(panel)
+        scroll = QScrollArea(widgetResizable=True, horizontalScrollBarPolicy=Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(self.settings)
+        scroll.setMinimumWidth(340)
+
+        root = QHBoxLayout()
+        root.addLayout(left, 1)
+        root.addWidget(scroll)
+        central = QWidget()
+        central.setLayout(root)
+        self.setCentralWidget(central)
+        self.resize(1280, 600)
+
+        self.timer = QTimer(self, interval=REFRESH_MS, timeout=self.refresh)
+        self.timer.start()
+        self.start_preview()
+        self.refresh()
+
+    # --- Widgets ----------------------------------------------------------------------------------
+
+    def exposure_box(self):
+        box = QGroupBox("Exposure")
+        form = QFormLayout(box)
+        self.auto = QCheckBox("Auto", toggled=self.on_auto)
+        form.addRow(self.auto)
+        self.metering = self.combo(fc.METERING, {"center": "Center-weighted", "average": "Average"},
+                                   lambda v: self.cam.xu_set(fc.SEL_METERING, v))
+        self.shutter = self.combo(fc.SHUTTER, {k: f"{k} s" for k in fc.SHUTTER},
+                                  lambda v: self.cam.xu_set(fc.SEL_SHUTTER, v))
+        self.iso = self.combo(fc.ISO, {k: str(k) for k in fc.ISO},
+                              lambda v: self.cam.set(fc.CID_BRIGHTNESS, v))
+        self.iso.setPlaceholderText("in between")
+        self.auto_shutter = QLabel()
+        form.addRow("Metering", self.metering)
+        form.addRow("Shutter speed", self.shutter)
+        form.addRow("ISO", self.iso)
+        form.addRow("Shutter speed", self.auto_shutter)
+        self.exposure_form = form
+        return box
+
+    def image_box(self):
+        box = QGroupBox("Image")
+        form = QFormLayout(box)
+        self.sliders = {}
+        for cid, label in SLIDERS:
+            self.sliders[cid] = self.slider(form, label, cid)
+        self.wb_auto = QCheckBox("Auto white balance",
+                                 toggled=lambda on: self.apply(lambda: self.cam.set(CID_WB_AUTO, int(on))))
+        form.addRow(self.wb_auto)
+        self.sliders[CID_WB_TEMPERATURE] = self.slider(form, "Temperature", CID_WB_TEMPERATURE, " K")
+        self.image_form = form
+        return box
+
+    def processing_box(self):
+        box = QGroupBox("Processing")
+        form = QFormLayout(box)
+        self.noise = QCheckBox("Noise reduction",
+                               toggled=lambda on: self.apply(lambda: self.cam.xu_set(fc.SEL_NOISE_REDUCTION, int(on))))
+        self.flicker = self.combo(fc.ANTI_FLICKER, ANTI_FLICKER_LABELS, lambda v: self.cam.set(fc.CID_POWER_LINE, v))
+        form.addRow(self.noise)
+        form.addRow("Anti-flicker", self.flicker)
+        return box
+
+    def combo(self, table, labels, setter):
+        """Combo box over one of facecam's capture tables; item data is the raw camera value."""
+        box = QComboBox()
+        for key, raw in table.items():
+            box.addItem(labels[key], raw)
+        box.activated.connect(lambda i: self.apply(lambda: setter(box.itemData(i))))
+        return box
+
+    def slider(self, form, label, cid, unit=""):
+        try:
+            q = self.cam.query(cid)
+        except OSError:
+            return None  # uvcvideo dropped this control at enumeration (see README, boot fix)
+        s = QSlider(Qt.Horizontal, minimum=q.minimum, maximum=q.maximum, singleStep=max(q.step, 1),
+                    pageStep=max(q.step, (q.maximum - q.minimum) // 10))
+        s.setTracking(False)  # one write when the slider is released, not one per pixel
+        value = QLabel(minimumWidth=56, alignment=Qt.AlignRight | Qt.AlignVCenter)
+        s.sliderMoved.connect(lambda v: value.setText(f"{v}{unit}"))
+        s.valueChanged.connect(lambda v: (value.setText(f"{v}{unit}"), self.apply(lambda: self.cam.set(cid, v))))
+        row = QHBoxLayout()
+        row.addWidget(s, 1)
+        row.addWidget(value)
+        form.addRow(label, row)
+        return s, value, unit
+
+    # --- Camera -----------------------------------------------------------------------------------
+
+    def apply(self, write):
+        try:
+            write()
+        except OSError as e:
+            self.state.setText(f"The camera rejected the change: {os.strerror(e.errno)}")
+        self.refresh()
+
+    def on_auto(self, on):
+        self.apply(lambda: fc.set_exposure(self.cam, manual=not on))
+
+    def refresh(self):
+        """Read every setting back from the camera; also tells whether it is answering at all."""
+        try:
+            manual = self.cam.manual()
+            brightness = self.cam.get(fc.CID_BRIGHTNESS)
+            shutter = self.cam.xu_get(fc.SEL_SHUTTER)
+            metering = self.cam.xu_get(fc.SEL_METERING)
+            noise = self.cam.xu_get(fc.SEL_NOISE_REDUCTION)
+            flicker = self.cam.get(fc.CID_POWER_LINE)
+            wb_auto = self.cam.get(CID_WB_AUTO)
+            image = {cid: self.cam.get(cid) for cid, w in self.sliders.items() if w}
+        except OSError:
+            self.settings.setEnabled(False)
+            self.state.setText("The camera only answers while it streams: start the preview, "
+                               "or open the camera in another application.")
+            return
+        self.settings.setEnabled(self.writable)
+        if self.state.text().startswith("The camera only answers"):
+            self.state.clear()
+
+        widgets = [self.auto, self.metering, self.shutter, self.iso, self.noise, self.flicker, self.wb_auto]
+        widgets += [w[0] for w in self.sliders.values() if w]
+        for w in widgets:
+            w.blockSignals(True)
+        self.auto.setChecked(not manual)
+        self.select(self.metering, metering)
+        self.select(self.shutter, shutter)
+        self.select(self.iso, brightness)
+        self.auto_shutter.setText(f"~1/{round(20000 / shutter)} s (auto)" if shutter else "?")
+        for field, visible in [(self.metering, not manual), (self.shutter, manual), (self.iso, manual),
+                               (self.auto_shutter, not manual)]:
+            self.exposure_form.setRowVisible(field, visible)
+        self.noise.setChecked(bool(noise))
+        self.select(self.flicker, flicker)
+        self.wb_auto.setChecked(bool(wb_auto))
+        for cid, w in self.sliders.items():
+            if w and not w[0].isSliderDown():
+                w[0].setValue(image[cid])
+                w[1].setText(f"{image[cid]}{w[2]}")
+        if self.sliders.get(CID_WB_TEMPERATURE):
+            self.sliders[CID_WB_TEMPERATURE][0].setEnabled(not wb_auto)
+        for w in widgets:
+            w.blockSignals(False)
+
+    @staticmethod
+    def select(box, raw):
+        box.setCurrentIndex(box.findData(raw))  # -1 (placeholder) for values Camera Hub never sets
+
+    # --- Preview ----------------------------------------------------------------------------------
+
+    def start_preview(self):
+        device = next((d for d in QMediaDevices.videoInputs()
+                       if os.path.realpath(bytes(d.id()).decode()) == os.path.realpath(self.dev)), None)
+        if device is None:
+            return self.show_message("Preview not available: Qt does not list the camera.")
+        self.qcamera = QCamera(device)
+        fmt = next((f for f in device.videoFormats() if f.pixelFormat() == QVideoFrameFormat.Format_UYVY
+                    and (f.resolution().width(), f.resolution().height()) == PREVIEW_SIZE), None)
+        if fmt:
+            self.qcamera.setCameraFormat(fmt)
+        self.qcamera.errorOccurred.connect(self.on_camera_error)
+        self.session.setCamera(self.qcamera)
+        self.got_frame = False
+        self.preview.setCurrentWidget(self.video)
+        self.preview_button.setText("Stop preview")
+        self.qcamera.start()
+        self.watchdog.start()
+
+    def stop_preview(self, message="Preview stopped. The camera is free for other applications."):
+        self.watchdog.stop()
+        if self.qcamera:
+            self.qcamera.stop()
+            self.session.setCamera(None)
+            self.qcamera.deleteLater()
+            self.qcamera = None
+        self.preview_button.setText("Start preview")
+        self.show_message(message)
+
+    def toggle_preview(self):
+        self.stop_preview() if self.qcamera else self.start_preview()
+
+    def restart_preview(self):
+        if self.qcamera and not self.got_frame:
+            self.stop_preview()
+            self.start_preview()
+
+    def on_frame(self, frame):
+        self.got_frame = True
+
+    def on_camera_error(self, error, text):
+        self.stop_preview(f"No preview: {text or 'the camera could not be opened'}.\n\n"
+                          "If another application (OBS…) is using the camera, the settings still work.")
+
+    def show_message(self, text):
+        self.message.setText(text)
+        self.preview.setCurrentWidget(self.message)
+
+    def closeEvent(self, event):
+        self.timer.stop()
+        self.stop_preview()
+        super().closeEvent(event)
+
+
+def main():
+    argv = sys.argv[1:]
+    if any(a in argv for a in ("-h", "--help")):
+        print(__doc__)
+        return 0
+    app = QApplication(sys.argv[:1])
+    app.setApplicationName("facecam-gui")
+    app.setDesktopFileName("facecam-gui")
+    found, fw = fc.find_device()
+    dev = argv[argv.index("--device") + 1] if "--device" in argv else found
+    if not dev:
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.critical(None, "Facecam", "Elgato Facecam (0fd9:0078) not found.")
+        return 1
+    window = Window(dev, writable=fw in fc.TESTED_FIRMWARE or "--force" in argv)
+    window.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

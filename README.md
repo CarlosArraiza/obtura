@@ -16,6 +16,7 @@ Facecam MK.2, Facecam Pro and Facecam Neo have different USB IDs and are **not**
 
 ## What you get
 
+- **`facecam-gui`**, a Camera Hub-style window (*Facecam* in the application menu): live preview, exposure (auto/manual, metering, shutter speed, ISO), zoom, contrast, saturation, sharpness, white balance, noise reduction and anti-flicker. Settings are read back from the camera every couple of seconds, so changes made from OBS or `facecam` show up too.
 - **`facecam` command**, with the same names and values as Camera Hub:
   ```
   facecam                          # show current settings
@@ -33,7 +34,7 @@ Facecam MK.2, Facecam Pro and Facecam Neo have different USB IDs and are **not**
 
 ## Install
 
-Requirements: Python 3, `v4l-utils` (`v4l2-ctl`), systemd and udev. No compiled code, no extra Python packages.
+Requirements: Python 3, `v4l-utils` (`v4l2-ctl`), systemd and udev. No compiled code. The GUI also needs **PySide6** with QtMultimedia (`pyside6` on Arch, `python3-pyside6` on Fedora, `python3-pyside6.qtmultimedia` and `python3-pyside6.qtmultimediawidgets` on Debian/Ubuntu); the command line tool needs no extra Python packages.
 
 ```sh
 git clone https://github.com/CarlosArraiza/facecam-linux.git
@@ -43,7 +44,17 @@ sudo ./install.sh
 
 Then re-plug the camera (or reboot) and check the log: `journalctl -t facecam`. To uninstall: `sudo ./uninstall.sh`.
 
-Files installed: `/usr/local/bin/facecam`, `/usr/local/libexec/facecam-init`, `/etc/udev/rules.d/99-elgato-facecam.rules`.
+Files installed: `/usr/local/bin/facecam`, `/usr/local/bin/facecam-gui`, `/usr/local/share/applications/facecam-gui.desktop`, `/usr/local/libexec/facecam-init`, `/etc/udev/rules.d/99-elgato-facecam.rules`.
+
+## Using the GUI
+
+Run `facecam-gui` or open *Facecam* from the application menu. The camera only answers control requests while it is streaming:
+
+- If the camera is free, the window opens a preview (UYVY 960×540) and the settings work.
+- If another application (OBS…) is using the camera, there is no preview, but the settings still work.
+- **Stop preview** frees the camera for other applications. The settings keep working while the window stays open; if the camera stops answering (nothing streaming and the USB device went to sleep), they are greyed out until the preview is started again.
+
+Exposure offers only Camera Hub's values. Zoom, contrast, saturation, sharpness and white balance are standard UVC controls and use the ranges the camera reports. On an untested firmware version the window is read-only unless started with `facecam-gui --force`.
 
 ## Using it with OBS
 
@@ -77,7 +88,7 @@ The camera also has a vendor HID interface. On other Elgato devices that channel
 
 Missing pieces: contrast, saturation, sharpness and white balance captures (probably standard UVC), Camera Hub's **SAVE** button, other firmware versions, and the other Facecam models. [docs/reverse-engineering.md](docs/reverse-engineering.md) explains how to capture Camera Hub on Windows safely and how to analyse the result with `tools/analyze_capture.py`. Raw data from the tested unit is in [`captures/`](captures/) and [`data/`](data/).
 
-Planned: a graphical tool with a Camera Hub-like interface, and a uvcvideo quirk upstream so the boot fix is no longer needed.
+Planned: a uvcvideo quirk upstream so the boot fix is no longer needed.
 
 ## License
 

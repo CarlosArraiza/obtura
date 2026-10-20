@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Facecam
+GenericName=Webcam Settings
+Comment=Camera Hub-style settings for the Elgato Facecam
+Exec=facecam-gui
+Icon=camera-web
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=elgato;webcam;camera;exposure;shutter;iso;
