@@ -4,9 +4,8 @@
 
 Usage: obtura-gui [--device /dev/videoN] [--force]
 
-Shows a live preview while the camera is free. The camera only answers control requests while
-it is streaming, so with the preview off the settings can only be changed if another application
-(e.g. OBS) is using the camera. Offers the same values as the obtura command, plus the standard
+Shows a live preview while the camera is free; the settings also work while another application
+(e.g. OBS) uses the camera, or with no preview at all if the udev rule keeps the camera awake. Offers the same values as the obtura command, plus the standard
 image controls (zoom, contrast, saturation, sharpness, white balance) within the ranges the
 camera reports.
 """
@@ -37,8 +36,8 @@ CID_WB_AUTO, CID_WB_TEMPERATURE = 0x0098090C, 0x0098091A
 SLIDERS = [(CID_ZOOM, "Zoom"), (0x00980901, "Contrast"), (0x00980902, "Saturation"), (0x0098091B, "Sharpness")]
 ANTI_FLICKER_LABELS = {"off": "Off", "50": "50 Hz", "60": "60 Hz"}
 PREVIEW_SIZE = (960, 540)  # light on USB bandwidth and CPU; the camera's smallest UYVY mode
-# Shorter than the 2 s USB autosuspend delay: the camera stalls control requests after a runtime
-# suspend until it streams again, and regular reads keep it awake after the preview is stopped.
+# Shorter than the 2 s USB autosuspend delay, for systems without the udev rule: regular reads keep
+# the camera from suspending, which would reset its settings and stall requests while it restarts.
 REFRESH_MS = 1500
 NO_FRAMES_MS = 4000  # the first stream after a format change sometimes delivers nothing
 
@@ -197,11 +196,11 @@ class Window(QMainWindow):
             image = {cid: self.cam.get(cid) for cid, w in self.sliders.items() if w}
         except OSError:
             self.settings.setEnabled(False)
-            self.state.setText("The camera only answers while it streams: start the preview, "
-                               "or open the camera in another application.")
+            self.state.setText("The camera does not answer (USB autosuspend?): start the preview, "
+                               "or install the udev rule (see README).")
             return
         self.settings.setEnabled(self.writable)
-        if self.state.text().startswith("The camera only answers"):
+        if self.state.text().startswith("The camera does not answer"):
             self.state.clear()
 
         widgets = [self.auto, self.metering, self.shutter, self.iso, self.noise, self.flicker, self.wb_auto]

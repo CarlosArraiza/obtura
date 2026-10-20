@@ -21,12 +21,13 @@ Only values seen in USB captures of Elgato Camera Hub are offered. "exposure man
 "exposure auto" send the same sequences as Camera Hub (manual starts at ISO 100, 1/33 s;
 auto resets exposure compensation to neutral).
 
-The camera only answers control requests while it is streaming. If no application (e.g. OBS)
-is using it, obtura keeps a temporary stream open (needs v4l2-ctl from v4l-utils).
+The camera stalls control requests for a while after USB autosuspend wakes it up (the udev rule
+disables autosuspend for it). If it does not answer, obtura keeps a temporary stream open, which
+also wakes it up (needs v4l2-ctl from v4l-utils).
 """
-import ctypes, errno, fcntl, glob, os, subprocess, sys, time
+import contextlib, ctypes, errno, fcntl, glob, os, subprocess, sys, time
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 VID, PID = "0fd9", "0078"
 TESTED_FIRMWARE = {"0409"}  # bcdDevice values the captures were made with
 
@@ -325,8 +326,13 @@ def main():
         sys.exit(f"Untested firmware (bcdDevice {fw}); the value tables were captured on 4.09. "
                  "Use --force at your own risk, and please report the result.")
 
-    with KeepStreaming(dev):
-        cam = Camera(dev)
+    cam = Camera(dev)
+    try:
+        cam.xu_get(SEL_NOISE_REDUCTION)
+        streaming = contextlib.nullcontext()  # awake: no need to stream
+    except OSError:
+        streaming = KeepStreaming(dev)
+    with streaming:
         try:
             if cmd == "status":
                 status(cam)
@@ -339,7 +345,7 @@ def main():
             else:
                 return 1
         except OSError as e:
-            sys.exit(f"The camera rejected the request: {e}. Is it streaming? (see 'obtura --help')")
+            sys.exit(f"The camera rejected the request: {e}")
     return 0
 
 

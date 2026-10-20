@@ -33,6 +33,7 @@ Facecam MK.2, Facecam Pro and Facecam Neo have different USB IDs and are **not**
   It works whether or not another application (OBS…) is using the camera.
 - **New V4L2 controls**: *Shutter Speed* (a menu with the Camera Hub speeds), *AE Metering* and *Noise Reduction*. They appear in OBS (V4L2 source properties) and in any V4L2 control app.
 - **Boot fix**: when it is plugged in, the camera rejects part of the requests uvcvideo uses to register its controls, and uvcvideo drops them silently (anywhere from 5 of 10 to all of them). A udev rule re-initialises the driver when that happens and then registers the new controls.
+- **Settings that stick**: the camera resets its settings whenever Linux puts it to sleep (USB autosuspend, 2 s after the last application closes it), while V4L2 and OBS keep showing the old values. The udev rule disables autosuspend for this camera.
 
 ## Install
 
@@ -62,11 +63,11 @@ For the GUI: `sudo pacman -S --asdeps pyside6 qt6-multimedia`. Remove it with `s
 
 ## Using the GUI
 
-Run `obtura-gui` or open *Obtura* from the application menu. The camera only answers control requests while it is streaming:
+Run `obtura-gui` or open *Obtura* from the application menu.
 
-- If the camera is free, the window opens a preview (UYVY 960×540) and the settings work.
+- If the camera is free, the window opens a preview (UYVY 960×540).
 - If another application (OBS…) is using the camera, there is no preview, but the settings still work.
-- **Stop preview** frees the camera for other applications. The settings keep working while the window stays open; if the camera stops answering (nothing streaming and the USB device went to sleep), they are greyed out until the preview is started again.
+- **Stop preview** frees the camera for other applications; the settings keep working.
 
 Exposure offers only Camera Hub's values. Zoom, contrast, saturation, sharpness and white balance are standard UVC controls and use the ranges the camera reports. On an untested firmware version the window is read-only unless started with `obtura-gui --force`.
 
