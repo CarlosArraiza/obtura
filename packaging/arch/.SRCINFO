@@ -1,6 +1,6 @@
 pkgbase = obtura
 	pkgdesc = Unofficial Camera Hub-style controls (shutter speed, ISO, metering, noise reduction) for the Elgato Facecam (1st gen)
-	pkgver = 0.3.1
+	pkgver = 0.3.2
 	pkgrel = 1
 	url = https://github.com/CarlosArraiza/obtura
 	install = obtura.install
@@ -11,7 +11,7 @@ pkgbase = obtura
 	depends = systemd
 	optdepends = pyside6: graphical interface (obtura-gui)
 	optdepends = qt6-multimedia: graphical interface (obtura-gui)
-	source = obtura-0.3.1.tar.gz::https://github.com/CarlosArraiza/obtura/archive/refs/tags/v0.3.1.tar.gz
-	sha256sums = 54dfd260bb22d420384860b324fdc11042dc071056d406bc6b9b61b7d6e293a5
+	source = obtura-0.3.2.tar.gz::https://github.com/CarlosArraiza/obtura/archive/refs/tags/v0.3.2.tar.gz
+	sha256sums = b742a7ba0246831ec512fd3db44f15f5cd267b619227d2b75dc0ce8fc3bf5707
 
 pkgname = obtura
