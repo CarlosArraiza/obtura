@@ -27,7 +27,7 @@ also wakes it up (needs v4l2-ctl from v4l-utils).
 """
 import contextlib, ctypes, errno, fcntl, glob, os, subprocess, sys, time
 
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 VID, PID = "0fd9", "0078"
 TESTED_FIRMWARE = {"0409"}  # bcdDevice values the captures were made with
 

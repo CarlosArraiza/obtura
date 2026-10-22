@@ -33,7 +33,7 @@ Facecam MK.2, Facecam Pro and Facecam Neo have different USB IDs and are **not**
   It works whether or not another application (OBS…) is using the camera.
 - **New V4L2 controls**: *Shutter Speed* (a menu with the Camera Hub speeds), *AE Metering* and *Noise Reduction*. They appear in OBS (V4L2 source properties) and in any V4L2 control app.
 - **Boot fix**: when it is plugged in, the camera rejects part of the requests uvcvideo uses to register its controls, and uvcvideo drops them silently (anywhere from 5 of 10 to all of them). A udev rule re-initialises the driver when that happens and then registers the new controls.
-- **Settings that stick**: the camera resets its settings whenever Linux puts it to sleep (USB autosuspend, 2 s after the last application closes it), while V4L2 and OBS keep showing the old values. The udev rule disables autosuspend for this camera.
+- **Settings that stick**: the camera resets its settings whenever Linux puts it to sleep (USB autosuspend, 2 s after the last application closes it), while V4L2 and OBS keep showing the old values. The udev rule and `obtura-init` disable autosuspend for this camera (`obtura-init` has to do it again because uvcvideo turns it back on whenever it binds).
 
 ## Install
 
