@@ -45,7 +45,7 @@ cd obtura
 sudo ./install.sh
 ```
 
-Then re-plug the camera (or reboot) and check the log: `journalctl -t obtura`. To uninstall: `sudo ./uninstall.sh`.
+Then re-plug the camera (or reboot) and check the log: `journalctl -t obtura`. The new controls (*Shutter Speed*, *AE Metering*, *Noise Reduction*) should be listed by `v4l2-ctl -d /dev/videoN --list-ctrls`, where `/dev/videoN` is the Facecam (`v4l2-ctl --list-devices`). To uninstall: `sudo ./uninstall.sh`.
 
 Files installed: `/usr/local/bin/obtura`, `/usr/local/bin/obtura-gui`, `/usr/local/share/applications/obtura-gui.desktop`, `/usr/local/libexec/obtura-init`, `/etc/udev/rules.d/99-obtura.rules`.
 
