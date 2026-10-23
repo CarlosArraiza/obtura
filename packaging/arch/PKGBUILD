@@ -1,10 +1,10 @@
-# Maintainer: CarlosArraiza <https://github.com/CarlosArraiza>
+# Maintainer: cali-sb <https://github.com/cali-sb>
 pkgname=obtura
 pkgver=0.3.3
 pkgrel=1
 pkgdesc="Unofficial Camera Hub-style controls (shutter speed, ISO, metering, noise reduction) for the Elgato Facecam (1st gen)"
 arch=('any')
-url="https://github.com/CarlosArraiza/obtura"
+url="https://github.com/cali-sb/obtura"
 license=('GPL-3.0-or-later')
 depends=('python' 'v4l-utils' 'systemd')
 optdepends=('pyside6: graphical interface (obtura-gui)'

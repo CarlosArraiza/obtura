@@ -40,7 +40,7 @@ Facecam MK.2, Facecam Pro and Facecam Neo have different USB IDs and are **not**
 Requirements: Python 3, `v4l-utils` (`v4l2-ctl`), systemd and udev. No compiled code. The GUI also needs **PySide6** with QtMultimedia (`pyside6` and `qt6-multimedia` on Arch, `python3-pyside6` on Fedora, `python3-pyside6.qtmultimedia` and `python3-pyside6.qtmultimediawidgets` on Debian/Ubuntu); the command line tool needs no extra Python packages.
 
 ```sh
-git clone https://github.com/CarlosArraiza/obtura.git
+git clone https://github.com/cali-sb/obtura.git
 cd obtura
 sudo ./install.sh
 ```
@@ -54,7 +54,7 @@ Files installed: `/usr/local/bin/obtura`, `/usr/local/bin/obtura-gui`, `/usr/loc
 Build and install the package with pacman instead (it will also be on the AUR as `obtura`):
 
 ```sh
-git clone https://github.com/CarlosArraiza/obtura.git
+git clone https://github.com/cali-sb/obtura.git
 cd obtura/packaging/arch
 makepkg -si
 ```
